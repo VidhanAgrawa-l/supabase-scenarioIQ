@@ -1,0 +1,6 @@
+.env
+.venv
+venv
+__pycache__/
+firebase_improvement_feedback.json
+sales_ai_test.json
