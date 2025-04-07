@@ -10,6 +10,8 @@ from passlib.context import CryptContext
 import os
 import json
 from dotenv import load_dotenv
+import random
+import string
 load_dotenv()
 
 # Initialize Supabase
@@ -46,6 +48,16 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+
+###### for get user ######
+class User(UserBase):
+    id: str
+    disabled: bool = False
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 
 class UserInDB(UserBase):
     id: str
@@ -93,6 +105,9 @@ async def create_user_in_db(user: UserCreate) -> UserInDB:
     if await get_user_by_email(user.email):
         raise HTTPException(status_code=400, detail="Email already registered")
     
+    # Generate Firebase-like ID
+    user_id = generate_firebase_like_id()
+    
     user_data = {
         "email": user.email,
         "full_name": user.full_name,
@@ -103,12 +118,28 @@ async def create_user_in_db(user: UserCreate) -> UserInDB:
         "hashed_password": get_password_hash(user.password),
         "disabled": False,
         "created_at": datetime.utcnow().isoformat(),
-        "profile_details": {}  # Empty JSON object
+        "day_zero": True,
+        "day_seven": True,
+        "day_twentyeighth": True,
+        "profile_details": {}
     }
     
-    response = supabase.table('users').insert({"data": user_data}).execute()
+    # Keep trying until we get a unique ID
+    while True:
+        try:
+            response = supabase.table('users').insert({
+                "user_id": user_id,
+                "data": user_data
+            }).execute()
+            break
+        except Exception as e:
+            if "duplicate key value violates unique constraint" in str(e):
+                user_id = generate_firebase_like_id()
+                continue
+            raise e
+    
     if response.data:
-        user_data['id'] = response.data[0]['user_id']
+        user_data['id'] = user_id
         return UserInDB(**user_data)
     raise HTTPException(status_code=500, detail="User creation failed")
 
@@ -143,6 +174,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
+############### for get current user ###############
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
 @app.post("/signup", response_model=UserInDB)
 async def signup(user: UserCreate):
     return await create_user_in_db(user)
@@ -155,6 +193,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
     return {"access_token": access_token, "token_type": "bearer", **user.model_dump()}
+
+
+@app.get("/users/me", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    return current_user
 
 @app.put("/users/me", response_model=UserInDB)
 async def update_user(updated_user: UserBase, current_user: UserInDB = Depends(get_current_user)):
@@ -179,3 +222,10 @@ async def update_user(updated_user: UserBase, current_user: UserInDB = Depends(g
 async def delete_user(current_user: UserInDB = Depends(get_current_user)):
     supabase.table('users').delete().eq("user_id", current_user.id).execute()
     return {"message": "User deleted successfully"}
+
+def generate_firebase_like_id(length: int = 20) -> str:
+    """Generate a Firebase-like ID of specified length"""
+    # Characters used in Firebase push IDs
+    chars = string.ascii_letters + string.digits + '-_'
+    return ''.join(random.choice(chars) for _ in range(length))
+

@@ -1,3 +1,14 @@
 sales_ai_test.json
 .env
 .venv
+firebase_users.json
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv
+.venv
